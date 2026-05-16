@@ -34,6 +34,124 @@
 - `estimate` 僅代表進球機率區間，不構成任何下單指令或建議。
 - 目前每注資金固定為 1200（僅作風控與提醒用途）。
 
+## 2.1 補充：上半場（First Half）判斷模式（Data-Driven）
+
+除主要使用於 75 分鐘後之外，本系統允許在特定條件下進行 **上半場進球機率評估（First Half Mode）**。
+
+本模式僅依賴當下 snapshot 數據，不使用任何無法由資料直接推導的概念。
+
+---
+
+### 🎯 使用範圍
+
+- 適用時間區間：15 – 40 分鐘
+- 判斷目標：
+  → 上半場剩餘時間內是否至少再進 1 球
+
+---
+
+### ✅ 啟用條件（必須同時滿足）
+1. current_minute ≤ 40
+2. current_line_over 為 0.5 或半場盤（如：0.5 / 0.75）
+3. input_confidence ≥ medium
+
+
+且至少滿足以下條件中 **任 2 項**：
+
+- shots_on_target（總） ≥ 4
+- 單邊 shots_on_target ≥ 3
+- current_corners 差 ≥ 3
+- dangerous_attack 出現 ≥ 25 且單邊明顯大於另一方（≥60%）
+- current_score ≠ 0-0
+- 聯賽屬已知高進球類型（澳洲 / 女足 / 後備）
+
+---
+
+### 📊 λ 判斷邏輯（上半場）
+
+基於時間區間與觀測數據推估：
+
+| 時間區間 | λ判斷標準（概念） |
+|--------|----------------|
+| 15–25 min | 需有基礎攻勢（SOT ≥4） |
+| 25–35 min | 需中等壓制（SOT ≥5 或單邊 ≥3） |
+| 35–40 min | 需明確壓制（SOT ≥6 或 corner/support data） |
+
+---
+
+### 🔥 強信號（High Trigger）
+
+以下條件任兩項成立 → 可視為高 λ：
+
+- shots_on_target ≥ 6
+- 單邊 shots_on_target ≥ 4
+- current_corners ≥ 5
+- current_score 為 1-1 / 2-1 / 2-2 等開放比分
+- dangerous_attack 單邊 ≥ 40 且明顯優勢
+
+---
+
+### ⚠️ 數據不足 / 低轉化風險（重要）
+
+以下情況需降低 estimate：
+
+- shots_on_target ≤ 2
+- shots_on_target 分布平均（無單邊優勢）
+- dangerous_attack 高但 shots_on_target ≤ 3
+- current_odds ≥ 2.2 且無明顯數據支撐
+
+---
+
+### 📌 模型區隔規則（強制）
+
+
+若 current_minute ≥ 60 → 禁止使用 First Half 模型
+若 current_minute ≤ 40 → 禁止使用 75 分鐘後 λ 門檻
+
+兩者為完全獨立模型。
+
+---
+
+### 🔒 全域限制
+
+所有上半場判斷必須符合：
+
+- 僅依 snapshot 當下數據
+- 不推論射門品質（因不可觀測）
+- 不使用節奏、氣勢等主觀概念
+
+所有判斷需能對應到：
+
+👉 可量化數據（shots_on_target / corners / score / odds）
+
+---
+
+### 🧠 模型定位（精簡）
+
+First Half 模型為：
+
+→ 「基於早段攻勢量化指標的進球機率判斷」
+
+其 edge 來源為：
+
+- 高 shot volume
+- 單邊壓制數據
+- 已發生比分帶動
+
+---
+
+### 🎯 系統原則（重要）
+
+本模組只回答：
+
+👉 「在這個數據條件下，進球機率是多少」
+
+不回答：
+
+❌ 為何會進球  
+❌ 比賽內容如何發生  
+❌ 射門品質判斷（不可得）
+
 ---
 
 ## 3. 系統目標與演進階段
@@ -235,7 +353,7 @@ input_confidence: high
 
 ---
 
-## 9. 結果回顧與紀錄方式
+## 9-1. 結果回顧與紀錄方式
 
 最終結果僅回報：
 
@@ -269,3 +387,93 @@ input_confidence: high
 - `timestamp`
 
 若連續失敗次數超過 3 次，必須提醒風控。
+
+## 11. 輸出格式規則（最高優先級）
+
+每次回覆必須包含兩個區塊，且順序固定：
+
+1️⃣ 第一部分：JSON（必須）
+- 必須完整輸出 JSON
+- 不得缺少任何欄位
+- 缺值請填 null
+- 必須包含 estimate 與 timestamp
+
+2️⃣ 第二部分：分析補充（可存在）
+- 用簡短條列說明判斷原因
+- 不得重複 JSON 資料
+- 不得輸出投注建議或指令
+- 僅限「機率來源說明」
+
+格式如下：
+
+{JSON}
+
+---
+analysis:
+- 關鍵因子 1
+- 關鍵因子 2
+- λ 判斷來源
+- 風險或不確定性
+
+禁止：
+- 只輸出分析沒有 JSON
+- JSON 前出現任何文字
+
+
+### 📊 補充：shots_on_target（SOT）判讀規則（適用於 analysis）
+
+為確保分析補充區塊具一致性，需使用以下可量化標準對 SOT 進行解讀：
+
+---
+
+#### ✅ SOT 強度分級
+
+weak:
+
+總 shots_on_target ≤ 5
+
+balanced:
+
+差 ≤ 1 且 總 shots_on_target ≥ 5
+
+lean:
+
+差 = 2 且 單邊 shots_on_target ≥ 5
+
+strong:
+
+差 ≥ 3 且 單邊 shots_on_target ≥ 6
+
+dominant:
+
+差 ≥ 4 且 單邊 shots_on_target ≥ 7
+
+
+---
+
+#### 📌 使用規則
+
+- SOT 差距僅代表壓制方向
+- 單邊 SOT 數量代表轉化潛力
+- 必須同時具備「差距 + 總量」才視為有效壓制
+
+---
+
+#### ⚠️ 強制修正條件
+
+出現以下情況時，analysis 必須反映為「壓制不足」或降低 estimate：
+
+- 單邊 shots_on_target ≤ 2
+- 總 shots_on_target ≤ 5
+- 差 ≥ 3 但單邊 shots_on_target ≤ 4
+- shots_on_target 分布接近（如 3-2 / 4-3）
+
+---
+
+#### 🎯 判讀核心原則
+
+
+差距 = 壓制方向
+總量 = 進球強度
+
+僅當兩者同時成立時，才可在 analysis 中視為有效進球壓力來源。
